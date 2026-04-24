@@ -303,6 +303,12 @@ const graphData = JSON.parse(
     .backgroundColor('#0a0e1a')
     .width(container.offsetWidth)
     .height(container.offsetHeight)
+    .nodePointerAreaPaint((node, color, ctx) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, Math.max(10, Math.sqrt(nodeVal(node)) * 4 + 6), 0, 2 * Math.PI);
+      ctx.fill();
+    })
     .onNodeClick(node => selectTopic(node.id))
     .onNodeHover(node => {
       const el = document.getElementById('hover-label');
