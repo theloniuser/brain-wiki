@@ -6,11 +6,23 @@ import path from 'path';
 const graphData = JSON.parse(
   fs.readFileSync(path.join(process.env.HOME, 'wiki', 'graph.json'), 'utf8')
 );
+
+const wikiDir = path.join(process.env.HOME, 'wiki');
+const searchIndex = {};
+for (const node of graphData.nodes) {
+  const filePath = path.join(wikiDir, `${node.id}.md`);
+  if (fs.existsSync(filePath)) {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    // Strip frontmatter
+    const body = raw.replace(/^---[\s\S]*?---\n/, '');
+    searchIndex[node.id] = body.toLowerCase();
+  }
+}
 ---
 
 <Base>
-  <!-- Graph data injected as JSON for client-side access -->
   <script id="graph-data" type="application/json" set:html={JSON.stringify(graphData)}></script>
+  <script id="search-index" type="application/json" set:html={JSON.stringify(searchIndex).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}></script>
 
   <div id="app">
     <div id="topbar">
@@ -166,7 +178,7 @@ const graphData = JSON.parse(
   }
   #content-loaded[hidden] { display: none; }
   #content-header {
-    padding: 14px 18px 10px;
+    padding: 14px 28px 10px;
     border-bottom: 1px solid var(--bg-surface);
     background: var(--bg-primary); flex-shrink: 0;
   }
@@ -176,7 +188,7 @@ const graphData = JSON.parse(
   }
   #content-meta { font-size: 11px; color: var(--accent); opacity: 0.7; font-family: monospace; }
   #content-chips {
-    padding: 8px 18px; border-bottom: 1px solid var(--bg-surface);
+    padding: 8px 28px; border-bottom: 1px solid var(--bg-surface);
     display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0;
     min-height: 38px; align-items: center;
   }
@@ -192,21 +204,25 @@ const graphData = JSON.parse(
   /* ── Markdown body ───────────────────────────────────── */
   #content-markdown {
     flex: 1; overflow-y: auto;
-    padding: 16px 18px; line-height: 1.75;
+    padding: 16px 28px 16px 28px; line-height: 1.75;
     color: var(--text-secondary); font-size: 13px;
   }
+</style>
+
+<style is:global>
+  /* All #content-markdown descendant rules must be global — content is injected via innerHTML
+     and doesn't receive Astro's scoping attribute */
   #content-markdown h1 { display: none; }
   #content-markdown h2 {
-    color: var(--text-primary); font-size: 14px;
-    margin: 20px 0 8px; padding-left: 10px;
-    border-left: 2px solid var(--accent);
+    color: var(--text-primary); font-size: 20px; font-weight: 700;
+    margin: 28px 0 4px; padding-top: 0;
+    letter-spacing: -0.2px;
   }
   #content-markdown h3 {
-    color: var(--text-secondary); font-size: 13px; font-weight: 600;
-    margin: 14px 0 6px; padding-left: 10px;
-    border-left: 1px solid var(--bg-surface);
+    color: var(--accent-light); font-size: 16px; font-weight: 600;
+    margin: 16px 0 4px; padding-top: 0;
   }
-  #content-markdown p { margin-bottom: 10px; }
+  #content-markdown p { margin-bottom: 6px; }
   #content-markdown strong { color: var(--text-primary); }
   #content-markdown em { color: var(--text-muted); }
   #content-markdown ul, #content-markdown ol { padding-left: 20px; margin-bottom: 10px; }
@@ -215,69 +231,138 @@ const graphData = JSON.parse(
     background: var(--bg-surface); padding: 1px 5px; border-radius: 3px;
     font-family: monospace; font-size: 12px; color: var(--accent-light);
   }
+  #content-markdown table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
+  #content-markdown th, #content-markdown td { padding: 3px 28px 3px 0; text-align: left; vertical-align: top; }
+  #content-markdown th { color: var(--text-muted); font-weight: 600; font-size: 12px; padding-bottom: 4px; }
   #content-markdown blockquote {
     border-left: 3px solid var(--accent-dim); padding-left: 12px;
     margin: 8px 0; color: var(--text-muted); font-style: italic;
+  }
+  #content-markdown hr {
+    border: none;
+    border-top: 1px solid #1e293b;
+    margin: 20px 0 6px;
+    height: 0;
   }
 </style>
 
 <script>
   import ForceGraph from 'force-graph';
   import { marked } from 'marked';
+  import { zoomTransform } from 'd3-zoom';
 
   // ── Data ──────────────────────────────────────────────────────────────
   const graphData = JSON.parse(document.getElementById('graph-data').textContent);
   const nodeMap = Object.fromEntries(graphData.nodes.map(n => [n.id, n]));
+  const searchIndex = JSON.parse(document.getElementById('search-index').textContent);
 
-  // After force-graph processes graphData, edge source/target become node objects.
-  // These helpers handle both the initial string form and the post-processing object form.
   function edgeSrc(e) { return typeof e.source === 'object' ? e.source.id : e.source; }
   function edgeTgt(e) { return typeof e.target === 'object' ? e.target.id : e.target; }
 
   // ── State ──────────────────────────────────────────────────────────────
   let selectedId = null;
+  let hoveredId = null;
   let Graph = null;
   let showMentions = false;
   let searchTerm = '';
 
   // ── Node helpers ───────────────────────────────────────────────────────
+  function nodeR(n) {
+    return Math.min(14, Math.max(6, Math.sqrt(n.entries) * 2));
+  }
   function nodeVal(n) {
-    const r = Math.min(12, Math.max(4, Math.sqrt(n.entries) * 2));
-    return (r / 4) ** 2;
+    return (nodeR(n) / 4) ** 2;
   }
 
   function nodeColor(n) {
+    const activeId = hoveredId || selectedId;
     if (n.id === selectedId) return '#2dd4bf';
-    if (selectedId) {
+    if (n.id === hoveredId) return '#2dd4bf';
+    if (activeId) {
       const connected = graphData.edges.some(
-        e => (edgeSrc(e) === selectedId && edgeTgt(e) === n.id) ||
-             (edgeTgt(e) === selectedId && edgeSrc(e) === n.id)
+        e => (edgeSrc(e) === activeId && edgeTgt(e) === n.id) ||
+             (edgeTgt(e) === activeId && edgeSrc(e) === n.id)
       );
       return connected ? '#5eead4' : '#134e4a';
     }
     return '#5eead4';
   }
 
-  // ── Graph init ─────────────────────────────────────────────────────────
+  // ── Direct hit detection — bypasses force-graph's shadow canvas ────────
+  // force-graph's shadow canvas approach is unreliable: it only refreshes
+  // every 800ms, and nodePointerAreaPaint circles can overlap at low zoom,
+  // making many nodes invisible to hit detection. Instead we convert screen
+  // coords to graph coords via d3-zoom's transform (stored on the canvas
+  // element as __zoom) and check distance to each node directly.
   const container = document.getElementById('graph');
 
+  function nodeAtPointer(clientX, clientY) {
+    const canvas = container.querySelector('canvas');
+    if (!canvas) return null;
+    const t = zoomTransform(canvas);
+    const rect = canvas.getBoundingClientRect();
+    const gx = (clientX - rect.left - t.x) / t.k;
+    const gy = (clientY - rect.top  - t.y) / t.k;
+    let best = null, bestDist = Infinity;
+    for (const n of graphData.nodes) {
+      if (n.x == null) continue;
+      const hitR = Math.max(nodeR(n) + 4, 12 / t.k);
+      const d = Math.hypot(n.x - gx, n.y - gy);
+      if (d <= hitR && d < bestDist) { best = n; bestDist = d; }
+    }
+    return best;
+  }
+
+  // ── Graph init ─────────────────────────────────────────────────────────
   Graph = ForceGraph()(container)
     .graphData({ nodes: graphData.nodes, links: graphData.edges })
     .nodeId('id')
     .nodeVal(nodeVal)
     .nodeLabel('')
     .nodeColor(nodeColor)
-    .nodeCanvasObjectMode(n => n.id === selectedId ? 'before' : undefined)
-    .nodeCanvasObject((n, ctx) => {
-      const r = Math.sqrt(nodeVal(n)) * 4; // matches force-graph's own radius formula
+    .nodeCanvasObjectMode(() => 'replace')
+    .nodeCanvasObject((n, ctx, globalScale) => {
+      const r = nodeR(n);
+      const activeId = hoveredId || selectedId;
+
+      if (n.id === selectedId || n.id === hoveredId) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 8, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(45,212,191,0.07)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 4, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(45,212,191,0.13)';
+        ctx.fill();
+      }
+
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r + 8, 0, 2 * Math.PI);
-      ctx.fillStyle = 'rgba(45,212,191,0.07)';
+      ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = nodeColor(n);
       ctx.fill();
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r + 4, 0, 2 * Math.PI);
-      ctx.fillStyle = 'rgba(45,212,191,0.13)';
-      ctx.fill();
+
+      const fontSize = 10 / globalScale;
+      ctx.font = `${fontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+
+      let labelColor = '#94a3b8';
+      let labelAlpha = 1;
+      if (n.id === selectedId || n.id === hoveredId) {
+        labelColor = '#2dd4bf';
+      } else if (activeId) {
+        const connected = graphData.edges.some(
+          e => (edgeSrc(e) === activeId && edgeTgt(e) === n.id) ||
+               (edgeTgt(e) === activeId && edgeSrc(e) === n.id)
+        );
+        if (connected) { labelColor = '#5eead4'; }
+        else { labelAlpha = 0.25; }
+      }
+
+      ctx.globalAlpha = labelAlpha;
+      ctx.fillStyle = labelColor;
+      ctx.fillText(n.label, n.x, n.y + r + 2);
+      ctx.globalAlpha = 1;
     })
     .linkSource('source')
     .linkTarget('target')
@@ -303,36 +388,88 @@ const graphData = JSON.parse(
     .backgroundColor('#0a0e1a')
     .width(container.offsetWidth)
     .height(container.offsetHeight)
-    .nodePointerAreaPaint((node, color, ctx) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, Math.max(10, Math.sqrt(nodeVal(node)) * 4 + 6), 0, 2 * Math.PI);
-      ctx.fill();
-    })
-    .onNodeClick(node => selectTopic(node.id))
-    .onNodeHover(node => {
-      const el = document.getElementById('hover-label');
-      if (node) {
-        el.textContent = `${node.label} (${node.entries} entries)`;
-        el.style.display = 'block';
-      } else {
-        el.style.display = 'none';
-      }
+    .enableNodeDrag(false)
+    .onBackgroundClick(() => {
+      graphData.nodes.forEach(n => { delete n.fx; delete n.fy; });
+      Graph.d3ReheatSimulation();
     });
 
-  // Position hover label with mouse
-  container.addEventListener('mousemove', e => {
-    const el = document.getElementById('hover-label');
-    if (el.style.display !== 'none') {
-      const rect = container.getBoundingClientRect();
-      el.style.left = (e.clientX - rect.left + 14) + 'px';
-      el.style.top  = (e.clientY - rect.top  - 10) + 'px';
+  Graph.d3Force('charge').strength(-120);
+  Graph.d3AlphaDecay(0.01);
+  Graph.d3VelocityDecay(0.2);
+
+  Graph.d3Force('gravity', alpha => {
+    graphData.nodes.forEach(n => {
+      n.vx -= n.x * 0.04 * alpha;
+      n.vy -= n.y * 0.04 * alpha;
+    });
+  });
+
+  Graph.d3ReheatSimulation();
+
+  // ── Direct canvas interaction (hover + drag + click) ───────────────────
+  const canvas = container.querySelector('canvas');
+  let dragNode = null;
+  let isDragging = false;
+  const hoverLabel = document.getElementById('hover-label');
+
+  canvas.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const node = nodeAtPointer(e.clientX, e.clientY);
+    if (node) {
+      e.stopPropagation();
+      dragNode = node;
+      isDragging = false;
+      node.fx = node.x;
+      node.fy = node.y;
+      hoverLabel.style.display = 'none';
+      Graph.d3ReheatSimulation();
+    }
+  }, true);
+
+  canvas.addEventListener('mousemove', e => {
+    if (dragNode) {
+      isDragging = true;
+      const t = zoomTransform(canvas);
+      const rect = canvas.getBoundingClientRect();
+      dragNode.fx = (e.clientX - rect.left - t.x) / t.k;
+      dragNode.fy = (e.clientY - rect.top  - t.y) / t.k;
+    } else {
+      const node = nodeAtPointer(e.clientX, e.clientY);
+      const newId = node ? node.id : null;
+      if (newId !== hoveredId) {
+        hoveredId = newId;
+        Graph.nodeColor(nodeColor);
+        if (node) {
+          hoverLabel.textContent = `${node.label} (${node.entries} entries)`;
+          hoverLabel.style.display = 'block';
+        } else {
+          hoverLabel.style.display = 'none';
+        }
+      }
+      if (hoverLabel.style.display !== 'none') {
+        const rect = container.getBoundingClientRect();
+        hoverLabel.style.left = (e.clientX - rect.left + 14) + 'px';
+        hoverLabel.style.top  = (e.clientY - rect.top  - 10) + 'px';
+      }
     }
   });
 
-  // Spread nodes out more (default charge is -30)
-  Graph.d3Force('charge').strength(-180);
-  Graph.d3ReheatSimulation();
+  canvas.addEventListener('mouseup', e => {
+    if (e.button !== 0) return;
+    if (dragNode) {
+      if (!isDragging) selectTopic(dragNode.id);
+      dragNode = null;
+      isDragging = false;
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (dragNode) { dragNode = null; isDragging = false; }
+    hoveredId = null;
+    Graph.nodeColor(nodeColor);
+    hoverLabel.style.display = 'none';
+  });
 
   // Toggle content mention edges
   const toggleBtn = document.getElementById('toggle-mentions');
@@ -415,7 +552,10 @@ const graphData = JSON.parse(
   document.getElementById('search').addEventListener('input', e => {
     searchTerm = e.target.value.toLowerCase().trim();
     Graph.nodeVisibility(n =>
-      !searchTerm || n.id.includes(searchTerm) || n.label.toLowerCase().includes(searchTerm)
+      !searchTerm ||
+      n.id.includes(searchTerm) ||
+      n.label.toLowerCase().includes(searchTerm) ||
+      (searchIndex[n.id] && searchIndex[n.id].includes(searchTerm))
     );
     Graph.linkVisibility(l => {
       if (!showMentions && l.type === 'content_mention') return false;
