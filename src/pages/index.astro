@@ -25,15 +25,20 @@ const graphData = JSON.parse(
     <div id="panes">
       <div id="graph-pane">
         <div id="graph"></div>
+        <div id="hover-label"></div>
         <div id="zoom-controls">
           <button id="zoom-in" aria-label="Zoom in">+</button>
           <button id="zoom-out" aria-label="Zoom out">−</button>
         </div>
         <div id="legend">
           <div class="legend-row"><span class="leg-solid"></span>shared entries</div>
-          <div class="legend-row"><span class="leg-dashed"></span>content mention</div>
+          <button id="toggle-mentions" class="legend-row legend-toggle" title="Show/hide content mention edges">
+            <span class="leg-dashed"></span>content mention
+          </button>
         </div>
       </div>
+
+      <div id="divider"></div>
 
       <div id="content-pane">
         <div id="content-empty">Click a node to explore a topic</div>
@@ -84,9 +89,15 @@ const graphData = JSON.parse(
   #panes { display: flex; flex: 1; overflow: hidden; }
 
   #graph-pane {
-    width: 52%; position: relative;
-    border-right: 1px solid var(--bg-surface);
+    width: 52%; min-width: 200px; position: relative;
+    flex-shrink: 0;
   }
+  #divider {
+    width: 5px; flex-shrink: 0; cursor: col-resize;
+    background: var(--bg-surface);
+    transition: background 0.15s;
+  }
+  #divider:hover, #divider.dragging { background: var(--accent); }
   #graph { width: 100%; height: 100%; }
 
   /* ── Zoom controls ───────────────────────────────────── */
@@ -117,6 +128,22 @@ const graphData = JSON.parse(
     display: block; width: 22px; height: 2px;
     background: var(--accent); opacity: 0.5; border-radius: 1px;
   }
+  #hover-label {
+    position: absolute; pointer-events: none; display: none; z-index: 10;
+    background: var(--bg-secondary); border: 1px solid var(--bg-surface);
+    border-radius: 4px; padding: 4px 9px;
+    font-size: 11px; color: var(--text-primary); font-family: monospace;
+    white-space: nowrap;
+  }
+  .legend-toggle {
+    background: none; border: none; cursor: pointer;
+    padding: 2px 4px; border-radius: 3px;
+    opacity: 0.4;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .legend-toggle:hover { background: var(--bg-surface); opacity: 0.7; }
+  .legend-toggle.active { opacity: 1; }
+
   .leg-dashed {
     display: block; width: 22px; height: 1px;
     background: repeating-linear-gradient(
@@ -210,6 +237,8 @@ const graphData = JSON.parse(
   // ── State ──────────────────────────────────────────────────────────────
   let selectedId = null;
   let Graph = null;
+  let showMentions = false;
+  let searchTerm = '';
 
   // ── Node helpers ───────────────────────────────────────────────────────
   function nodeVal(n) {
@@ -236,7 +265,7 @@ const graphData = JSON.parse(
     .graphData({ nodes: graphData.nodes, links: graphData.edges })
     .nodeId('id')
     .nodeVal(nodeVal)
-    .nodeLabel(n => `${n.label} (${n.entries} entries)`)
+    .nodeLabel('')
     .nodeColor(nodeColor)
     .nodeCanvasObjectMode(n => n.id === selectedId ? 'before' : undefined)
     .nodeCanvasObject((n, ctx) => {
@@ -270,10 +299,46 @@ const graphData = JSON.parse(
       ctx.stroke();
       ctx.setLineDash([]);
     })
+    .linkVisibility(l => showMentions || l.type !== 'content_mention')
     .backgroundColor('#0a0e1a')
     .width(container.offsetWidth)
     .height(container.offsetHeight)
-    .onNodeClick(node => selectTopic(node.id));
+    .onNodeClick(node => selectTopic(node.id))
+    .onNodeHover(node => {
+      const el = document.getElementById('hover-label');
+      if (node) {
+        el.textContent = `${node.label} (${node.entries} entries)`;
+        el.style.display = 'block';
+      } else {
+        el.style.display = 'none';
+      }
+    });
+
+  // Position hover label with mouse
+  container.addEventListener('mousemove', e => {
+    const el = document.getElementById('hover-label');
+    if (el.style.display !== 'none') {
+      const rect = container.getBoundingClientRect();
+      el.style.left = (e.clientX - rect.left + 14) + 'px';
+      el.style.top  = (e.clientY - rect.top  - 10) + 'px';
+    }
+  });
+
+  // Spread nodes out more (default charge is -30)
+  Graph.d3Force('charge').strength(-180);
+  Graph.d3ReheatSimulation();
+
+  // Toggle content mention edges
+  const toggleBtn = document.getElementById('toggle-mentions');
+  toggleBtn.addEventListener('click', () => {
+    showMentions = !showMentions;
+    toggleBtn.classList.toggle('active', showMentions);
+    Graph.linkVisibility(l => {
+      if (!showMentions && l.type === 'content_mention') return false;
+      if (searchTerm) return edgeSrc(l).includes(searchTerm) || edgeTgt(l).includes(searchTerm);
+      return true;
+    });
+  });
 
   // Zoom buttons
   document.getElementById('zoom-in').addEventListener('click', () => {
@@ -342,13 +407,38 @@ const graphData = JSON.parse(
 
   // ── Search ──────────────────────────────────────────────────────────────
   document.getElementById('search').addEventListener('input', e => {
-    const term = e.target.value.toLowerCase().trim();
+    searchTerm = e.target.value.toLowerCase().trim();
     Graph.nodeVisibility(n =>
-      !term || n.id.includes(term) || n.label.toLowerCase().includes(term)
+      !searchTerm || n.id.includes(searchTerm) || n.label.toLowerCase().includes(searchTerm)
     );
-    Graph.linkVisibility(l =>
-      !term || edgeSrc(l).includes(term) || edgeTgt(l).includes(term)
-    );
+    Graph.linkVisibility(l => {
+      if (!showMentions && l.type === 'content_mention') return false;
+      if (searchTerm) return edgeSrc(l).includes(searchTerm) || edgeTgt(l).includes(searchTerm);
+      return true;
+    });
+  });
+
+  // ── Draggable divider ──────────────────────────────────────────────────
+  const divider = document.getElementById('divider');
+  const graphPane = document.getElementById('graph-pane');
+  const panesEl = document.getElementById('panes');
+
+  divider.addEventListener('mousedown', e => {
+    e.preventDefault();
+    divider.classList.add('dragging');
+    const onMove = ev => {
+      const rect = panesEl.getBoundingClientRect();
+      const newW = Math.min(Math.max(ev.clientX - rect.left, 200), rect.width - 200);
+      graphPane.style.width = newW + 'px';
+      Graph.width(graphPane.offsetWidth).height(graphPane.offsetHeight);
+    };
+    const onUp = () => {
+      divider.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   });
 
   // ── URL: initial load ──────────────────────────────────────────────────
