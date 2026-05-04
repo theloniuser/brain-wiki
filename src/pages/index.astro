@@ -159,7 +159,7 @@ for (const node of graphData.nodes) {
   .leg-dashed {
     display: block; width: 22px; height: 1px;
     background: repeating-linear-gradient(
-      to right, #0d9488 0, #0d9488 4px, transparent 4px, transparent 7px
+      to right, #339fd9 0, #339fd9 4px, transparent 4px, transparent 7px
     );
     opacity: 0.7;
   }
@@ -183,23 +183,13 @@ for (const node of graphData.nodes) {
     background: var(--bg-primary); flex-shrink: 0;
   }
   #content-title {
-    font-size: 18px; font-weight: 700;
+    font-family: 'NewCenturySchlbk', Georgia, serif;
+    font-size: 28px; font-weight: normal;
     color: var(--text-primary); margin-bottom: 4px;
+    letter-spacing: -0.01em; line-height: 1.2;
   }
   #content-meta { font-size: 11px; color: var(--accent); opacity: 0.7; font-family: monospace; }
-  #content-chips {
-    padding: 8px 28px; border-bottom: 1px solid var(--bg-surface);
-    display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0;
-    min-height: 38px; align-items: center;
-  }
-  .chip {
-    font-size: 11px; color: var(--accent-light);
-    background: var(--accent-dim); border: 1px solid #1a4a46;
-    padding: 3px 10px; border-radius: 20px;
-    cursor: pointer; font-family: monospace;
-    transition: background 0.12s;
-  }
-  .chip:hover { background: #1a5e58; }
+  /* ── Chips moved to is:global — dynamically injected via JS ── */
 
   /* ── Markdown body ───────────────────────────────────── */
   #content-markdown {
@@ -210,16 +200,31 @@ for (const node of graphData.nodes) {
 </style>
 
 <style is:global>
-  /* All #content-markdown descendant rules must be global — content is injected via innerHTML
-     and doesn't receive Astro's scoping attribute */
+  /* Chips and markdown rules must be global — content is injected via JS and doesn't
+     receive Astro's scoping attribute */
+  #content-chips {
+    padding: 8px 28px; border-bottom: 1px solid var(--bg-surface);
+    display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0;
+    min-height: 38px; align-items: center;
+  }
+  .chip {
+    font-size: 11px; color: var(--accent-light);
+    background: transparent; border: 1px solid rgba(255,127,0,0.25);
+    padding: 3px 14px; border-radius: 4px;
+    cursor: pointer; font-family: monospace;
+    transition: background 0.12s;
+  }
+  .chip:hover { background: rgba(255,127,0,0.10); }
   #content-markdown h1 { display: none; }
   #content-markdown h2 {
-    color: var(--text-primary); font-size: 20px; font-weight: 700;
+    font-family: 'NewCenturySchlbk', Georgia, serif;
+    color: var(--text-primary); font-size: 20px; font-weight: normal;
     margin: 28px 0 4px; padding-top: 0;
-    letter-spacing: -0.2px;
+    letter-spacing: 0;
   }
   #content-markdown h3 {
-    color: var(--accent-light); font-size: 16px; font-weight: 600;
+    font-family: 'NewCenturySchlbk', Georgia, serif;
+    color: var(--accent-light); font-size: 16px; font-weight: normal;
     margin: 16px 0 4px; padding-top: 0;
   }
   #content-markdown p { margin-bottom: 6px; }
@@ -276,16 +281,16 @@ for (const node of graphData.nodes) {
 
   function nodeColor(n) {
     const activeId = hoveredId || selectedId;
-    if (n.id === selectedId) return '#2dd4bf';
-    if (n.id === hoveredId) return '#2dd4bf';
+    if (n.id === selectedId) return '#ff7f00';
+    if (n.id === hoveredId) return '#ff7f00';
     if (activeId) {
       const connected = graphData.edges.some(
         e => (edgeSrc(e) === activeId && edgeTgt(e) === n.id) ||
              (edgeTgt(e) === activeId && edgeSrc(e) === n.id)
       );
-      return connected ? '#5eead4' : '#134e4a';
+      return connected ? '#339fd9' : '#3a3b3a';
     }
-    return '#5eead4';
+    return '#339fd9';
   }
 
   // ── Direct hit detection — bypasses force-graph's shadow canvas ────────
@@ -328,11 +333,11 @@ for (const node of graphData.nodes) {
       if (n.id === selectedId || n.id === hoveredId) {
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 8, 0, 2 * Math.PI);
-        ctx.fillStyle = 'rgba(45,212,191,0.07)';
+        ctx.fillStyle = 'rgba(255,127,0,0.07)';
         ctx.fill();
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 4, 0, 2 * Math.PI);
-        ctx.fillStyle = 'rgba(45,212,191,0.13)';
+        ctx.fillStyle = 'rgba(255,127,0,0.15)';
         ctx.fill();
       }
 
@@ -346,16 +351,16 @@ for (const node of graphData.nodes) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
 
-      let labelColor = '#94a3b8';
+      let labelColor = '#b0ada8';
       let labelAlpha = 1;
       if (n.id === selectedId || n.id === hoveredId) {
-        labelColor = '#2dd4bf';
+        labelColor = '#ff7f00';
       } else if (activeId) {
         const connected = graphData.edges.some(
           e => (edgeSrc(e) === activeId && edgeTgt(e) === n.id) ||
                (edgeTgt(e) === activeId && edgeSrc(e) === n.id)
         );
-        if (connected) { labelColor = '#5eead4'; }
+        if (connected) { labelColor = '#339fd9'; }
         else { labelAlpha = 0.25; }
       }
 
@@ -368,8 +373,8 @@ for (const node of graphData.nodes) {
     .linkTarget('target')
     .linkWidth(l => l.type === 'shared_entries' ? Math.min(l.strength * 0.4 + 1, 3.5) : 0.5)
     .linkColor(l => l.type === 'shared_entries'
-      ? 'rgba(45,212,191,0.35)'
-      : 'rgba(13,148,136,0.25)')
+      ? 'rgba(51,159,217,0.40)'
+      : 'rgba(51,159,217,0.20)')
     .linkCanvasObjectMode(l => l.type === 'content_mention' ? 'replace' : undefined)
     .linkCanvasObject((l, ctx) => {
       const src = l.source;
@@ -377,7 +382,7 @@ for (const node of graphData.nodes) {
       if (typeof src !== 'object' || typeof tgt !== 'object') return;
       ctx.beginPath();
       ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = 'rgba(13,148,136,0.25)';
+      ctx.strokeStyle = 'rgba(51,159,217,0.25)';
       ctx.lineWidth = 0.5;
       ctx.moveTo(src.x, src.y);
       ctx.lineTo(tgt.x, tgt.y);
@@ -385,7 +390,7 @@ for (const node of graphData.nodes) {
       ctx.setLineDash([]);
     })
     .linkVisibility(l => showMentions || l.type !== 'content_mention')
-    .backgroundColor('#0a0e1a')
+    .backgroundColor('#2a2b2a')
     .width(container.offsetWidth)
     .height(container.offsetHeight)
     .enableNodeDrag(false)
