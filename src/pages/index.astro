@@ -80,7 +80,7 @@ for (const node of graphData.nodes) {
   }
   #brand {
     color: var(--accent); font-size: 11px;
-    letter-spacing: 2px; font-weight: 700; font-family: monospace;
+    letter-spacing: 2px; font-weight: 700; font-family: var(--font-serif);
   }
   #search-wrap {
     flex: 1; max-width: 380px;
@@ -209,12 +209,12 @@ for (const node of graphData.nodes) {
   }
   .chip {
     font-size: 11px; color: var(--accent-light);
-    background: transparent; border: 1px solid rgba(255,127,0,0.25);
+    background: transparent; border: 1px solid rgba(255,127,0,0.55);
     padding: 3px 14px; border-radius: 4px;
     cursor: pointer; font-family: monospace;
     transition: background 0.12s;
   }
-  .chip:hover { background: rgba(255,127,0,0.10); }
+  .chip:hover { border-color: var(--accent); }
   #content-markdown h1 { display: none; }
   #content-markdown h2 {
     font-family: 'NewCenturySchlbk', Georgia, serif;
